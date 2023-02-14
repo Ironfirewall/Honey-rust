@@ -13,6 +13,6 @@ nalgebra-glm = "0.18.0"
 png = "0.17.7"
 pretty_env_logger = "0.4.0"
 thiserror = "1.0.38"
-tobj = "3.2.4"
-vulkanalia = "0.17.0"
-winit = "0.28.1"
+tobj = { version = "3.2.4", features = ["log"] }
+vulkanalia = { version = "=0.17.0", features = ["libloading", "window"] }
+winit = "0.27.0"

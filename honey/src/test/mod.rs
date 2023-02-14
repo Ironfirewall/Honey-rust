@@ -1,10 +1,10 @@
 pub mod something{
 
-    pub fn runTest(){
-        testingImports();
+    pub fn run_test(){
+        testing_imports();
     }
 
-    fn testingImports(){
+    fn testing_imports(){
         println!("Imports are working");
     }
 }
