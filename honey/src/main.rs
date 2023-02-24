@@ -27,6 +27,10 @@ use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::ExtDebugUtilsExtension;
 
+use vulkanalia::vk::KhrSurfaceExtension;
+use vk::KhrWin32SurfaceExtension;
+
+
 use winit::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
@@ -81,7 +85,8 @@ fn main() -> Result<()> {
 struct App {
     entry: Entry,
     instance: Instance,
-    data: AppData
+    data: AppData,
+    device: Device
 }
 
 impl App {
@@ -91,8 +96,10 @@ impl App {
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
+        data.surface = vk_window::create_surface(&instance, window)?;
         pick_physical_device(&instance, &mut data)?;
-        Ok(Self {entry, instance, data})
+        let device = create_logical_device(&instance, &mut data)?;
+        Ok(Self {entry, instance, data, device})
     }
 
     /// Renders a frame for our Vulkan app.
@@ -102,12 +109,43 @@ impl App {
 
     /// Destroys our Vulkan app.
     unsafe fn destroy(&mut self) {
+        self.device.destroy_device(None);
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.messenger, None);
         }
 
+        self.instance.destroy_surface_khr(self.data.surface, None);
         self.instance.destroy_instance(None);
     }
+}
+
+unsafe fn create_logical_device(instance: &Instance, data: &mut AppData) -> Result<Device>{
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+
+    let queue_priorities = &[1.0];
+    let queue_info = vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(indices.graphics).queue_priorities(queue_priorities);
+
+    let layers = if VALIDATION_ENABLED {
+        vec![VALIDATION_LAYER.as_ptr()]
+    } else {
+        vec![]
+    };
+
+    let features = vk::PhysicalDeviceFeatures::builder();
+
+    let queue_infos = &[queue_info];
+    let info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(queue_infos)
+        .enabled_layer_names(&layers)
+        .enabled_features(&features);
+
+    let device = instance.create_device(data.physical_device, &info, None)?;
+
+    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
+
+    Ok(device)
+
 }
 
 #[derive(Debug, Error)]
@@ -115,18 +153,39 @@ impl App {
 pub struct SuitabilityError(pub &'static str);
 
 unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
-    Ok(())
+    for physical_device in instance.enumerate_physical_devices()? {
+        let properties = instance.get_physical_device_properties(physical_device);
+
+        if let Err(error) = check_physical_device(instance, data, physical_device) {
+            warn!("Skipping physical device (`{}`): {}", properties.device_name, error);
+        } else {
+            info!("Selected physical device (`{}`).", properties.device_name);
+            data.physical_device = physical_device;
+            return Ok(());
+        }
+    }
+    Err(anyhow!("Failed to find suitable physical device."))
 }
 
 /// The Vulkan handles and associated properties used by our Vulkan app.
 #[derive(Clone, Debug, Default)]
 struct AppData {
+    surface: vk::SurfaceKHR,
     messenger: vk::DebugUtilsMessengerEXT,
-    physical_device: vk::PhysicalDevice
+    physical_device: vk::PhysicalDevice,
+    graphics_queue: vk::Queue
 }
 
 unsafe fn check_physical_device(instance: &Instance, data: &AppData, physical_device: vk::PhysicalDevice,) -> Result<()> {
     let properties = instance.get_physical_device_properties(physical_device);
+    if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
+        return Err(anyhow!(SuitabilityError("Only discrete GPUs are supported.")));
+    }
+    let features = instance.get_physical_device_features(physical_device);
+    if features.geometry_shader != vk::TRUE {
+        return Err(anyhow!(SuitabilityError("Missing geometry shader support.")));
+    }
+    QueueFamilyIndices::get(instance, data, physical_device)?;
     Ok(())
 }
 
@@ -211,4 +270,44 @@ extern "system" fn debug_callback(
     }
 
     vk::FALSE
+}
+
+#[derive(Copy, Clone, Debug)]
+struct QueueFamilyIndices {
+    graphics: u32,
+    present: u32
+}
+
+impl QueueFamilyIndices {
+    unsafe fn get(
+        instance: &Instance,
+        data: &AppData,
+        physical_device: vk::PhysicalDevice,
+    ) -> Result<Self> {
+        let properties = instance
+            .get_physical_device_queue_family_properties(physical_device);
+
+        let graphics = properties
+            .iter()
+            .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+            .map(|i| i as u32);
+
+        let mut present = None;
+        for (index, properties) in properties.iter().enumerate() {
+            if instance.get_physical_device_surface_support_khr(
+                physical_device,
+                index as u32,
+                data.surface,
+            )? {
+                present = Some(index as u32);
+                break;
+            }
+        }
+
+        if let (Some(graphics), Some(present)) = (graphics, present) {
+            Ok(Self { graphics , present})
+        } else {
+            Err(anyhow!(SuitabilityError("Missing required queue families.")))
+        }
+    }
 }
