@@ -16,11 +16,12 @@ mod logger;
 
 use test::something::run_test;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Ok};
 use log::*;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_void;
+use thiserror::Error;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
@@ -90,7 +91,8 @@ impl App {
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
-        Ok(Self {entry, instance,data})
+        pick_physical_device(&instance, &mut data)?;
+        Ok(Self {entry, instance, data})
     }
 
     /// Renders a frame for our Vulkan app.
@@ -108,11 +110,26 @@ impl App {
     }
 }
 
+#[derive(Debug, Error)]
+#[error("Missing {0}.")]
+pub struct SuitabilityError(pub &'static str);
+
+unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
+    Ok(())
+}
+
 /// The Vulkan handles and associated properties used by our Vulkan app.
 #[derive(Clone, Debug, Default)]
 struct AppData {
-    messenger: vk::DebugUtilsMessengerEXT
+    messenger: vk::DebugUtilsMessengerEXT,
+    physical_device: vk::PhysicalDevice
 }
+
+unsafe fn check_physical_device(instance: &Instance, data: &AppData, physical_device: vk::PhysicalDevice,) -> Result<()> {
+    let properties = instance.get_physical_device_properties(physical_device);
+    Ok(())
+}
+
 
 unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) -> Result<Instance> {
     let application_info = vk::ApplicationInfo::builder()
